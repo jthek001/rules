@@ -1,0 +1,76 @@
+
+
+#timing on
+ 
+# Count the number of HTTP sessions on a VS, and limit them. Use the table feature of 10.1 to track the number of
+# current sessions
+#
+# This is a simple version of limiting the number of sessions to a website.
+#
+#  Notes
+#   1. Cookies are opaque values. Keys into the session table only
+#   2. No checksum is included in the cookie value
+#   3. No additional checking is performed.
+#   4. The cookie isn't set secure (So will work on HTTP, but you may want to change for an HTTPS only site)
+#   5. There is no concept of 'LOGOUT' of a session... You can add this under HTTP_REQUEST...
+#
+ 
+when RULE_INIT {
+ 
+   log local0. "Running RULE_INIT"
+   # All of these parameters SHOULD be set from a class... So you can vary them and only require ONE iRule for all...
+ 
+   # Max session count
+   set static::max_active_clients 5
+ 
+   # Prefix for session cookie (VS name will be appended)
+   set static::sessionCookiePrefix "session"
+ 
+   # Session (Idle) timeout in seconds
+   set static::sessionTimeout 600
+ 
+   log local0. "rule session_limit initialized: max: $static::max_active_clients cookieprefix: $static::sessionCookiePrefix timeout: $static::sessionTimeout"
+}
+ 
+when HTTP_REQUEST {
+   set subtableName "sessionLimit-[virtual name]"
+   set sessionCookieName "$static::sessionCookiePrefix-[virtual name]"
+   set need_cookie 0
+ 
+   ;# test cookie presence
+   if {[HTTP::cookie exists $sessionCookieName]} {
+      set client_id [HTTP::cookie $sessionCookieName]
+         # Check the session still exists
+         set sessiondata [table lookup -subtable $subtableName $client_id]
+         if { $sessiondata != "" } {
+         # We have a valid session... The lookup has reset the timeer on it so just finish processing
+         # Optional processing in here to check or validate the client session via IP etc if required...
+         log local0. "Valid session $client_id - continuing"
+         return
+      }
+   }
+ 
+   # No valid session... So do we have a free 'slot'?
+   log local0. "No session. Checking for free slot (Max     $static::max_active_clients)"
+   set sessionCount [table keys -subtable $subtableName -count]
+   log local0. "No session. Checking for free slot (Current $sessionCount)"
+ 
+   if {$sessionCount &lt; $static::max_active_clients} {
+      # Yes we have a free slot... Allocate it and note that we need to set the cookie on the client
+      set need_cookie 1
+      set client_id [format &quot;%08d&quot; [expr { int(100000000 * rand()) }]]
+      set sessionValue [IP::client_addr]
+ 
+      table add -subtable $subtableName $client_id $sessionValue $static::sessionTimeout
+      log local0. &quot;New Session ($client_id) added value $sessionValue Timeout $static::sessionTimeout&quot;
+   } else {
+      HTTP::redirect &quot;http://sorry.domain.com/&quot;
+   }
+}
+ 
+when HTTP_RESPONSE {
+   ;# insert cookie if needed
+   if {$need_cookie == 1} {
+      HTTP::cookie insert name $sessionCookieName value $client_id path &quot;/&quot;
+   }
+}
