@@ -1,0 +1,9 @@
+when CLIENT_ACCEPTED {
+ACCESS::restrict_irule_events disable
+}
+
+when HTTP_REQUEST {
+if { [HTTP::uri] eq "/saml/sp/profile/acs/metadata.xml" } {
+    HTTP::respond 200 content [ifile get metadata.xml] "Content-Type" "text/xml"
+}
+}
